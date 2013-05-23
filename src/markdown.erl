@@ -119,7 +119,7 @@ p1([{blocktag, [{{{tag, open}, Type}, Tg}] = _Tag} | T], R, I, Acc) ->
 %% blank lines/linefeeds are gobbled down
 p1([{Type, _} | T], R, I, Acc)
   when Type == blank orelse Type == linefeed ->
-    Rest = grab_empties(T),
+    {Rest, _} = grab_empties(T),
     p1(Rest, R, I, [pad(I) ++ "\n" | Acc]);
 
 %% two consecutive normal lines should be concatenated...
@@ -218,10 +218,15 @@ p1([{{ol, _P}, _} | _T] = List, R, I, Acc) ->
 %% and other codeblocks
 p1([{{codeblock, P1}, S1}, {{codeblock, P2}, S2} | T], R, I, Acc) ->
     p1([{{codeblock, merge(P1, pad(I), P2)}, S1 ++ S2} | T], R, I, Acc);
-p1([{{codeblock, P}, _} | T], R, I, Acc) ->
-    Rest = grab_empties(T),
-    p1(Rest, R, I,  ["<pre><code>" ++ make_str(snip(P), R)
-                     ++ "\n</code></pre>\n\n" | Acc]);
+p1([{{codeblock, P1}, S1} | T1], R, I, Acc) ->
+    case grab_empties(T1) of
+        {[{{codeblock, P2}, S2} | T2], E} ->
+            p1([{{codeblock, merge(P1, pad(I), E ++ P2)}, S1 ++ E ++ S2} | T2],
+               R, I, Acc);
+        {Rest, _} ->
+            p1(Rest, R, I, ["<pre><code>" ++ htmlencode(make_plain_str(snip(P1)))
+                            ++ "\n</code></pre>\n\n" | Acc])
+    end;
 
 %% horizontal rules
 p1([{hr, _} | T], R, I, Acc) ->
@@ -255,9 +260,11 @@ grab_for_blockhtml([H | T], Type, Acc) ->
     Str = make_plain_str(Content),
     grab_for_blockhtml(T, Type, [Str | Acc]).
 
-grab_empties([{linefeed, _} | T]) -> grab_empties(T);
-grab_empties([{blank, _} | T])    -> grab_empties(T);
-grab_empties(List)                -> List.
+grab_empties(List) -> grab_empties1(List, []).
+
+grab_empties1([{linefeed, _} | T], E) -> grab_empties1(T, [{{lf,lf}, "\n"} | E]);
+grab_empties1([{blank, _} | T], E)    -> grab_empties1(T, [{{lf,lf}, "\n"} | E]);
+grab_empties1(List, E)                -> {List, E}.
 
 merge(P1, Pad, P2) ->
     NewP1 = make_br(P1),
@@ -450,15 +457,14 @@ t_l1([[{{ws, sp}, _},
        {{inline, open}, _} | T1] = H | T2], A1, A2) ->
     t_inline(H, T1, T2, A1, A2);
 t_l1([[{{ws, tab}, _},
-       {{inline, open}, _} | T1] = H | T2], A1, A2) ->
-    t_inline(H, T1, T2, A1, A2);
+       {{inline, open}, _} | _] = H | T2], A1, A2) ->
+    t_l1(T2, A1, [type_ws(H) | A2]);
 t_l1([[{{ws, comp}, W},
        {{inline, open}, _} | T1] = H | T2], A1, A2) ->
-    case gt(W, 3) of
-        {true, _R} -> t_inline(H, T1, T2, A1, A2);
-        false      -> t_l1(T1, A1, [{normal , H} | A2]) % same exit at the final clause!
-    end,
-    t_inline(H, T1, T2, A1, A2);
+    case gt(W, 4) of
+        {true, _R} -> t_l1(T2, A1, [type_ws(H) | A2]);
+        false      -> t_inline(H, T1, T2, A1, A2)
+    end;
 t_l1([[{{inline, open}, _} | T1] = H | T2], A1, A2) ->
     t_inline(H, T1, T2, A1, A2);
 
@@ -1125,7 +1131,7 @@ get_inline([{{inline, close}, _}, {{ws, sp}, _}, {bra, _} | T], _R, A, img) ->
 get_inline([{{inline, close}, _}, {{inline, open}, _} | T], R, A, _) ->
     Text = make_plain_str(reverse(A)),
     case get_id_diff(T) of
-        normal            -> {[], make_plain_str(reverse(A))};
+        normal            -> {[], Text};
         {[{_, Id}], Rest} ->
             {Url, Title} = case lists:keyfind(Id, 1, R) of
                                false          -> {"", ""};
@@ -1133,7 +1139,7 @@ get_inline([{{inline, close}, _}, {{inline, open}, _} | T], R, A, _) ->
                            end,
             Tag = {Url, Title, Text},
             {Rest, Tag};
-        _Other -> {[], make_plain_str(reverse(A))} % random failing id's
+        _Other -> {[], Text} % random failing id's
     end;
 %% so does this one - just delete the space and rethrow it
 get_inline([{{inline, close}, _} = C , {{ws, _}, _},
