@@ -20,8 +20,9 @@ ERLWARE_COMMONS_PLT=$(CURDIR)/.erlware_commons_plt
 
 all: compile doc test #dialyzer #fail on travis
 
+REBAR_URL=https://github.com/rebar/rebar/wiki/rebar
 $(REBAR):
-	wget https://github.com/rebar/rebar/wiki/rebar
+	curl -Lo rebar $(REBAR_URL) || wget $(REBAR_URL)
 	chmod a+x rebar
 
 get-rebar: $(REBAR)
